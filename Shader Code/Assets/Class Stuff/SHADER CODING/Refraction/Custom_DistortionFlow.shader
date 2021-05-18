@@ -1,4 +1,4 @@
-Shader "DistortionFlow"
+Shader "Custom/DistortionFlow"
 {
     Properties
     {
