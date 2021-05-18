@@ -12,27 +12,33 @@ Shader "Custom/DistortionFlow"
     	_Speed("Speed", Float) = 1
     	_FlowStrength("Flow Strength", Float) = 1
     	_FlowOffset("Flow Offset", Float) = 1
+    	_HeightScale("Height Scale, Constant", Float) = 1
+    	_HeightScaleSpeed("Height Scale, Modulated", Float) = 0.75
         _Glossiness ("Smoothness", Range(0,1)) = 0.5
         _Metallic ("Metallic", Range(0,1)) = 0.0
     }
     SubShader
     {
-        Tags { "RenderType"="Opaque" }
+        Tags { "RenderType" = "Transparent" "Queue" = "Transparent"}
         LOD 200
 
         CGPROGRAM
         // Physically based Standard lighting model, and enable shadows on all light types
-        #pragma surface surf Standard fullforwardshadows
+        #pragma surface surf Standard alpha //fullforwardshadows
 
         // Use shader model 3.0 target, to get nicer looking lighting
         #pragma target 3.0
 		#include "Flow.cginc"
+        #include "LookThroughWater.cginc"
+        
         sampler2D _MainTex, _FlowMap, _DerivHeightMap;
         float _UJump, _VJump, _Tiling, _Speed, _FlowStrength, _FlowOffset;
+        float _HeightScale, _HeightScaleSpeed;
 
         struct Input
         {
             float2 uv_MainTex;
+        	float4 screenPos;
         };
 
         half _Glossiness, _Metallic;
@@ -46,7 +52,7 @@ Shader "Custom/DistortionFlow"
         // put more per-instance properties here
         UNITY_INSTANCING_BUFFER_END(Props)
 
-        float3 UnpackDerivitiveHeight(float4 textureData)
+        float3 UnpackDerivativeHeight(float4 textureData)
         {
 	        float3 dh = textureData.agb;
         	dh.xy = dh.xy * 2 - 1;
@@ -55,17 +61,20 @@ Shader "Custom/DistortionFlow"
 
         void surf (Input IN, inout SurfaceOutputStandard o)
         {
-			float2 flowVector = tex2D(_FlowMap, IN.uv_MainTex).rg * 2 - 1;
+			float3 flowVector = tex2D(_FlowMap, IN.uv_MainTex).rgb;
+        	flowVector.xy = flowVector.xy * 2 - 1;
         	flowVector *= _FlowStrength;
 			float noise = tex2D(_FlowMap, IN.uv_MainTex).a;		
 			float time = _Time.y * _Speed + noise;
 			float2 jump = float2(_UJump, _VJump);
         	
-			float3 uvwA = FlowUVW(IN.uv_MainTex, flowVector, jump, _FlowOffset, _Tiling, time, false);
-			float3 uvwB = FlowUVW(IN.uv_MainTex, flowVector, jump, _FlowOffset, _Tiling, time, true);
+			float3 uvwA = FlowUVW(IN.uv_MainTex, flowVector.xy, jump, _FlowOffset, _Tiling, time, false);
+			float3 uvwB = FlowUVW(IN.uv_MainTex, flowVector.xy, jump, _FlowOffset, _Tiling, time, true);
 
-			float3 dhA = UnpackDerivitiveHeight(tex2D(_DerivHeightMap, uvwA.xy)) * uvwA.z;
-			float3 dhB = UnpackDerivitiveHeight(tex2D(_DerivHeightMap, uvwB.xy)) * uvwB.z;
+			float finalHeight = (flowVector.z * _HeightScaleSpeed) + (_HeightScale);
+        	
+			float3 dhA = UnpackDerivativeHeight(tex2D(_DerivHeightMap, uvwA.xy)) * (uvwA.z * finalHeight);
+			float3 dhB = UnpackDerivativeHeight(tex2D(_DerivHeightMap, uvwB.xy)) * (uvwB.z * finalHeight);
 			o.Normal = normalize(float3(-(dhA.xy + dhB.xy), 1));
         	
             // Albedo comes from a texture tinted by color
@@ -78,8 +87,10 @@ Shader "Custom/DistortionFlow"
             o.Metallic = _Metallic;
             o.Smoothness = _Glossiness;
             o.Alpha = c.a;
+
+        	o.Albedo = ColourBelowWater(IN.screenPos);
+        	o.Alpha = 1;
         }
         ENDCG
     }
-    FallBack "Diffuse"
 }
